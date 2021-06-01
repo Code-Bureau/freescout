@@ -2,11 +2,8 @@
 
 namespace App;
 
-use App\Attachment;
-use App\Customer;
-use App\Folder;
-use App\Thread;
-use App\User;
+use App\ElasticSearch\ConversationsConfigurator;
+use ScoutElastic\Searchable;
 use App\Events\UserAddedNote;
 use App\Events\UserReplied;
 use App\Events\ConversationStatusChanged;
@@ -18,7 +15,8 @@ use Watson\Rememberable\Rememberable;
 
 class Conversation extends Model
 {
-    use Rememberable;
+    use Rememberable, Searchable;
+
     // This is obligatory.
     public $rememberCacheDriver = 'array';
 
@@ -201,6 +199,28 @@ class Conversation extends Model
      * Attributes which are not fillable using fill() method.
      */
     protected $guarded = ['id', 'folder_id'];
+
+    /**
+     * This property defines the Index Configurator for ElasticSearch.
+     *
+     * @See https://github.com/babenkoivan/scout-elasticsearch-driver#alternatives
+     *
+     */
+    protected $indexConfigurator = ConversationsConfigurator::class;
+
+    protected $mapping = [
+        'properties' => [
+            'title' => [
+                'type' => 'text',
+                // Also you can configure multi-fields, more details you can find here https://www.elastic.co/guide/en/elasticsearch/reference/current/multi-fields.html
+                'fields' => [
+                    'raw' => [
+                        'type' => 'keyword',
+                    ]
+                ]
+            ],
+        ]
+    ];
 
     protected static function boot()
     {
@@ -924,7 +944,7 @@ class Conversation extends Model
 
         // Get ids of all the conversations starred by user and cache them
         if (!isset(self::$starred_conversation_ids[$mailbox_id])) {
-            
+
             self::$starred_conversation_ids[$mailbox_id] = self::getUserStarredConversationIds($mailbox_id, $user_id);
         }
 
@@ -1355,7 +1375,7 @@ class Conversation extends Model
         //     'conversation_id' => $this->id,
         // ];
         // ConversationFolder::updateOrCreate($values, $values);
-        
+
         return true;
     }
 
@@ -1367,7 +1387,7 @@ class Conversation extends Model
         // Find folder
         $folder_query = Folder::where('mailbox_id', $this->mailbox_id)
                     ->where('type', $folder_type);
-        
+
         if ($user_id) {
             $folder_query->where('user_id', $user_id);
         }
@@ -1758,7 +1778,7 @@ class Conversation extends Model
 
             $has_attachments = false;
             foreach ($replies as $reply_thread) {
-                
+
                 $thread_has_attachments = false;
                 foreach ($reply_thread->attachments as $attachment) {
                     $new_attachment = $attachment->replicate();
