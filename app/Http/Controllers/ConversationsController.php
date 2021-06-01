@@ -1,4 +1,7 @@
 <?php
+/**
+ *
+ */
 
 namespace App\Http\Controllers;
 
@@ -21,12 +24,18 @@ use App\MailboxUser;
 use App\SendLog;
 use App\Thread;
 use App\User;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Input;
 use TorMorten\Eventy\Facades\Events as Eventy;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Session;
 use Validator;
 
+/**
+ * Class ConversationsController
+ * @package App\Http\Controllers
+ */
 class ConversationsController extends Controller
 {
     const PREV_CONVERSATIONS_LIMIT = 5;
@@ -2225,9 +2234,9 @@ class ConversationsController extends Controller
         // TODO: Replace with ElasticSearch calls
         $conversations = [];
         if (Eventy::filter('search.is_needed', true, 'conversations')) {
-            $conversations = $this->searchQuery($request, $user, $q, $filters);
+            $conversations = $this->searchQuery($user, $q, $filters);
         }
-        $customers = $this->searchCustomers($request, $user);
+        $customers = $this->searchCustomers($q, $filters, $user);
 
         // View options
         // List of available filters.
@@ -2280,16 +2289,10 @@ class ConversationsController extends Controller
     /**
      * Search conversations.
      */
-    public function searchQuery($request, $user, $q, $filters)
+    public function searchQuery($user, $q, $filters)
     {
         // Get IDs of mailboxes to which user has access
         $mailbox_ids = $user->mailboxesIdsCanView();
-
-        // Filters
-        //$filters = $request->f ?? [];
-
-        // Search query
-        //$q = $this->getSearchQuery($request);
 
         // Like is case insensitive.
         $like = '%'.mb_strtolower($q).'%';
@@ -2434,16 +2437,10 @@ class ConversationsController extends Controller
     /**
      * Search conversations.
      */
-    public function searchCustomers($request, $user)
+    public function searchCustomers($q, $filters, $user)
     {
         // Get IDs of mailboxes to which user has access
         $mailbox_ids = $user->mailboxesIdsCanView();
-
-        // Filters
-        $filters = $this->getSearchFilters($request);;
-
-        // Search query
-        $q = $this->getSearchQuery($request);
 
         // Like is case insensitive.
         $like = '%'.mb_strtolower($q).'%';
@@ -2476,7 +2473,7 @@ class ConversationsController extends Controller
             $query_customers->where('conversations.mailbox_id', '=', $filters['mailbox']);
         }
 
-        $query_customers = \Eventy::filter('search.customers.apply_filters', $query_customers, $filters, $q);
+        $query_customers = Eventy::filter('search.customers.apply_filters', $query_customers, $filters, $q);
 
         return $query_customers->paginate(50);
     }
@@ -2484,7 +2481,7 @@ class ConversationsController extends Controller
     /**
      * Get dummy folder for search.
      */
-    public function getSearchFolder($conversations)
+    /*public function getSearchFolder($conversations)
     {
         $folder = new Folder();
         $folder->type = Folder::TYPE_ASSIGNED;
@@ -2492,7 +2489,7 @@ class ConversationsController extends Controller
         //$folder->total_count = $conversations->count();
 
         return $folder;
-    }
+    }*/
 
     /**
      * Ajax conversations search.
@@ -2501,7 +2498,7 @@ class ConversationsController extends Controller
     {
         if (array_key_exists('q', $request->filter)) {
             // Search
-            $conversations = $this->searchQuery($request, $user, $this->getSearchQuery($request), $this->getSearchFilters($request));
+            $conversations = $this->searchQuery($user, $this->getSearchQuery($request), $this->getSearchFilters($request));
         } else {
             // Filters
             $conversations = $this->conversationsFilterQuery($request, $user);
@@ -2542,7 +2539,7 @@ class ConversationsController extends Controller
     /**
      * Process attachments on reply, new conversation, saving draft and forwarding.
      */
-    public function processReplyAttachments($request)
+    public function processReplyAttachments($request): array
     {
         $has_attachments = false;
         $attachments = [];
@@ -2571,7 +2568,7 @@ class ConversationsController extends Controller
     /**
      * Undo reply.
      */
-    public function undoReply(Request $request, $thread_id)
+    public function undoReply(Request $request, $thread_id): RedirectResponse
     {
         $thread = Thread::findOrFail($thread_id);
 
@@ -2584,7 +2581,7 @@ class ConversationsController extends Controller
 
         // Check undo timeout
         if ($thread->created_at->diffInSeconds(now()) > Conversation::UNDO_TIMOUT) {
-            \Session::flash('flash_error_floating', __('Sending can not be undone'));
+            Session::flash('flash_error_floating', __('Sending can not be undone'));
 
             return redirect()->away($conversation->url($conversation->folder_id));
         }
@@ -2636,7 +2633,7 @@ class ConversationsController extends Controller
     /**
      * Find or create customer when creating a Phone conversation.
      */
-    public function processPhoneCustomer($request)
+    public function processPhoneCustomer($request): array
     {
         $customer_data = [];
         $customer_email = '';
