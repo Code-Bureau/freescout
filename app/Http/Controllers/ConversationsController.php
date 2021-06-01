@@ -2232,6 +2232,7 @@ class ConversationsController extends Controller
         $recent_search_queries = $this->updateRecentSearchSession($q);
 
         // TODO: Replace with ElasticSearch calls
+        dd(Conversation::search('*')->get());
         $conversations = [];
         if (Eventy::filter('search.is_needed', true, 'conversations')) {
             $conversations = $this->searchQuery($user, $q, $filters);
