@@ -15,6 +15,7 @@ use App\Events\UserCreatedThreadDraft;
 use App\Events\UserReplied;
 use App\Folder;
 use App\Follower;
+use App\Http\Requests\SanitizeSearchRequest;
 use App\Mailbox;
 use App\MailboxUser;
 use App\SendLog;
@@ -22,6 +23,8 @@ use App\Thread;
 use App\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Input;
+use TorMorten\Eventy\Facades\Events as Eventy;
+use Illuminate\Support\Facades\Cache;
 use Validator;
 
 class ConversationsController extends Controller
@@ -336,23 +339,6 @@ class ConversationsController extends Controller
             'to'           => $to,
         ]);
     }
-
-    /**
-     * Conversation draft.
-     */
-    // public function draft($id)
-    // {
-    //     $conversation = Conversation::findOrFail($id);
-
-    //     $this->authorize('view', $conversation);
-
-    //     return view('conversations/create', [
-    //         'conversation' => $conversation,
-    //         'mailbox'      => $conversation->mailbox,
-    //         'folder'       => $conversation->folder,
-    //         'folders'      => $conversation->mailbox->getAssesibleFolders(),
-    //     ]);
-    // }
 
     /**
      * Conversations ajax controller.
@@ -779,7 +765,7 @@ class ConversationsController extends Controller
                     if (!empty($request->saved_reply_id)) {
                         $thread->saved_reply_id = $request->saved_reply_id;
                     }
-                    
+
                     $forwarded_conversations = [];
                     $forwarded_threads = [];
 
@@ -2047,7 +2033,7 @@ class ConversationsController extends Controller
             'mailboxes'    => $user->mailboxesCanView(),
         ]);
     }
-    
+
     /**
      * Merge conversations.
      */
@@ -2202,7 +2188,7 @@ class ConversationsController extends Controller
         if (!$response['msg'] && !$user->can('view', $folder->mailbox)) {
             $response['msg'] = __('Not enough permissions');
         }
-        
+
         if (!$response['msg']) {
             $query_conversations = Conversation::getQueryByFolder($folder, $user->id);
             $conversations = $folder->queryAddOrderBy($query_conversations)->paginate(Conversation::DEFAULT_LIST_SIZE, ['*'], 'page', $request->page);
@@ -2221,69 +2207,59 @@ class ConversationsController extends Controller
     /**
      * Search.
      */
-    public function search(Request $request)
+    public function search(SanitizeSearchRequest $request)
     {
+        // Parameters
+        $params = $request->validated();
+        $mode = $params['mode'];
+        $q = $params['q'];
+        $filters = $params['filters'];
+        // Look into the search.filters event and access the filters
+        $filters = Eventy::filter('search.filters', $filters, $mode, $request);
+
+        // Session
         $user = auth()->user();
+        $userId = auth()->id();
+        $recent_search_queries = $this->updateRecentSearchSession($q);
+
+        // TODO: Replace with ElasticSearch calls
         $conversations = [];
-        $customers = [];
+        if (Eventy::filter('search.is_needed', true, 'conversations')) {
+            $conversations = $this->searchQuery($request, $user, $q, $filters);
+        }
+        $customers = $this->searchCustomers($request, $user);
 
-        $mode = $this->getSearchMode($request);
+        // View options
+        // List of available filters.
+        if ($mode == Conversation::SEARCH_MODE_CONV) {
+            $filters_list = Eventy::filter('search.filters_list', Conversation::$search_filters, $mode, $filters, $q);
+        } else {
+            $filters_list = Eventy::filter('search.filters_list_customers', Customer::$search_filters, $mode, $filters, $q);
+        }
 
-        // Search query
-        $q = $this->getSearchQuery($request);
-
-        // Filters.
-        $filters = $this->getSearchFilters($request);
+        // View options
         $filters_data = [];
         // Modify filters is needed.
         if (!empty($filters['customer'])) {
             // Get customer name.
             $filters_data['customer'] = Customer::find($filters['customer']);
         }
-        //$filters = \Eventy::filter('search.filters', $filters, $filters_data, $mode, $q);
-
-        // Remember recent query.
-        $recent_search_queries = session('recent_search_queries') ?? [];
-        if ($q && !in_array($q, $recent_search_queries)) {
-            array_unshift($recent_search_queries, $q);
-            $recent_search_queries = array_slice($recent_search_queries, 0, 4);
-            session()->put('recent_search_queries', $recent_search_queries);
-        }
-
-        $conversations = [];
-        if (\Eventy::filter('search.is_needed', true, 'conversations')) {
-            $conversations = $this->searchQuery($request, $user, $q, $filters);
-        }
-        $customers = $this->searchCustomers($request, $user);
-
-        // Dummy folder
-        $folder = $this->getSearchFolder($conversations);
-
-        // List of available filters.
-        if ($mode == Conversation::SEARCH_MODE_CONV) {
-            $filters_list = \Eventy::filter('search.filters_list', Conversation::$search_filters, $mode, $filters, $q);
-        } else {
-            $filters_list = \Eventy::filter('search.filters_list_customers', Customer::$search_filters, $mode, $filters, $q);
-        }
-
-        $mailboxes = \Cache::remember('search_filter_mailboxes_'.$user->id, 5, function () use ($user) {
+        $mailboxes = Cache::remember('search_filter_mailboxes_'.$userId, 5, function () use ($user) {
             return $user->mailboxesCanView();
         });
-        $users = \Cache::remember('search_filter_users_'.$user->id, 5, function () use ($user, $mailboxes) {
+        $users = Cache::remember('search_filter_users_'.$userId, 5, function () use ($user, $mailboxes) {
             return $user->whichUsersCanView($mailboxes);
         });
 
         return view('conversations/search', [
-            'folder'        => $folder,
-            'q'             => $request->q,
+            'q'             => $q,
             'filters'       => $filters,
             'filters_list'  => $filters_list,
             'filters_data'  => $filters_data,
-            //'filters_list_all'  => $filters_list_all,
             'mode'          => $mode,
             'conversations' => $conversations,
             'customers'     => $customers,
-            'recent'        => session('recent_search_queries'),
+            'recent'        => $recent_search_queries,
             'users'         => $users,
             'mailboxes'     => $mailboxes,
         ]);
@@ -2742,5 +2718,20 @@ class ConversationsController extends Controller
             'customer' => $customer,
             'customer_email' => $customer_email,
         ];
+    }
+
+    /**
+     * UpdateRecentSearchSession
+     */
+    private function updateRecentSearchSession($query)
+    {
+        $recent_search_queries = session('recent_search_queries') ?? [];
+        if ($query && !in_array($query, $recent_search_queries)) {
+            array_unshift($recent_search_queries, $query);
+            $recent_search_queries = array_slice($recent_search_queries, 0, 4);
+            session()->put('recent_search_queries', $recent_search_queries);
+        }
+
+        return session('recent_search_queries');
     }
 }
