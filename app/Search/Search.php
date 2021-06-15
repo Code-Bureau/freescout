@@ -19,11 +19,11 @@ class Search
      *
      *
      * @param User $user
-     * @param array $q
+     * @param string $q
      * @param array $filters
      * @return mixed
      */
-    public function search(User $user, array $q, array $filters) {
+    public function search(User $user, string $q, array $filters) {
         return $this->searchDatabase($user, $q, $filters);
     }
 
@@ -31,11 +31,11 @@ class Search
      *
      *
      * @param User $user
-     * @param array $q
+     * @param string $q
      * @param array $filters
      * @return mixed
      */
-    private function searchDatabase(User $user, array $q, array $filters) {
+    private function searchDatabase(User $user, string $q, array $filters) {
 
         // Get IDs of mailboxes to which user has access
         $mailbox_ids = $user->mailboxesIdsCanView();
