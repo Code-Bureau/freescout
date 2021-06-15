@@ -2,7 +2,7 @@
 
 namespace App;
 
-use App\ElasticSearch\ConversationsConfigurator;
+use App\Search\ConversationsConfigurator;
 use ScoutElastic\Searchable;
 use App\Events\UserAddedNote;
 use App\Events\UserReplied;

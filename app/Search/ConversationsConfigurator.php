@@ -1,10 +1,14 @@
 <?php
 
-namespace App\ElasticSearch;
+namespace App\Search;
 
 use ScoutElastic\IndexConfigurator;
 use ScoutElastic\Migratable;
 
+/**
+ * Class ConversationsConfigurator
+ * @package App\Search
+ */
 class ConversationsConfigurator extends IndexConfigurator
 {
     use Migratable;

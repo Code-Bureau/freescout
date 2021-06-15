@@ -2231,8 +2231,6 @@ class ConversationsController extends Controller
         $userId = auth()->id();
         $recent_search_queries = $this->updateRecentSearchSession($q);
 
-        // TODO: Replace with ElasticSearch calls
-        dd(Conversation::search('*')->get());
         $conversations = [];
         if (Eventy::filter('search.is_needed', true, 'conversations')) {
             $conversations = $this->searchQuery($user, $q, $filters);
@@ -2306,6 +2304,7 @@ class ConversationsController extends Controller
             ->join('threads', function ($join) {
                 $join->on('conversations.id', '=', 'threads.conversation_id');
             });
+
         if ($q) {
             $query_conversations->where(function ($query) use ($like, $filters, $q) {
                 $query->where('conversations.subject', 'like', $like)
@@ -2390,6 +2389,7 @@ class ConversationsController extends Controller
 
         $query_conversations->orderBy('conversations.last_reply_at', 'DESC');
 
+        dd($query_conversations->paginate(Conversation::DEFAULT_LIST_SIZE));
         return $query_conversations->paginate(Conversation::DEFAULT_LIST_SIZE);
     }
 
