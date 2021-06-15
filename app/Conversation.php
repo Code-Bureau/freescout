@@ -3,6 +3,7 @@
 namespace App;
 
 use App\Search\ConversationsConfigurator;
+use ElasticScoutDriverPlus\QueryDsl;
 use ScoutElastic\Searchable;
 use App\Events\UserAddedNote;
 use App\Events\UserReplied;
@@ -15,7 +16,7 @@ use Watson\Rememberable\Rememberable;
 
 class Conversation extends Model
 {
-    use Rememberable, Searchable;
+    use Rememberable, Searchable, QueryDsl;
 
     // This is obligatory.
     public $rememberCacheDriver = 'array';
@@ -208,19 +209,63 @@ class Conversation extends Model
      */
     protected $indexConfigurator = ConversationsConfigurator::class;
 
+    /**
+     * This property defines the mapping in ElasticSearch for this model. The required
+     * fields are:
+     *
+     *  subject
+     *  customer_email
+     *  number
+     *  id
+     *
+     * @var \array[][]
+     */
     protected $mapping = [
         'properties' => [
-            'title' => [
+            'customer_email' => [
                 'type' => 'text',
-                // Also you can configure multi-fields, more details you can find here https://www.elastic.co/guide/en/elasticsearch/reference/current/multi-fields.html
                 'fields' => [
                     'raw' => [
-                        'type' => 'keyword',
+                        'type' => 'keyword'
                     ]
                 ]
             ],
+            'subject' => [
+                'type' => 'text',
+                'fields' => [
+                    'raw' => [
+                        'type' => 'keyword'
+                    ]
+                ]
+            ],
+            'id' => [
+                'type' => 'long',
+                'fields' => [
+                    'raw' => [
+                        'type' => 'keyword'
+                    ]
+                ]
+            ],
+            'number' => [
+                'type' => 'long',
+                'fields' => [
+                    'raw' => [
+                        'type' => 'keyword'
+                    ]
+                ]
+            ]
         ]
     ];
+
+    /**
+     * @return array
+     */
+    /*public function toSearchableArray(): array
+    {
+        return [
+            'id' => $this->id
+        ];
+    }*/
 
     protected static function boot()
     {

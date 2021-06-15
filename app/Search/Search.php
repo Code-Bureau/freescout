@@ -6,7 +6,9 @@
 namespace App\Search;
 
 use App\Conversation;
+use App\Customer;
 use App\User;
+use TorMorten\Eventy\Facades\Events as Eventy;
 
 /**
  * Class Search
@@ -23,8 +25,64 @@ class Search
      * @param array $filters
      * @return mixed
      */
-    public function search(User $user, string $q, array $filters) {
+    public function searchConversation(User $user, string $q, array $filters) {
+        // Check if ElasticScoutDriver is loaded
+        if (App()->getProvider("ElasticScoutDriver\ServiceProvider")) {
+            return $this->searchElasticSearch($user, $q, $filters);
+        }
+
         return $this->searchDatabase($user, $q, $filters);
+    }
+
+    public function searchCustomers(string $q, array $filters, User $user) {
+        // Get IDs of mailboxes to which user has access
+        $mailbox_ids = $user->mailboxesIdsCanView();
+
+        // Like is case insensitive.
+        $like = '%'.mb_strtolower($q).'%';
+
+        $query_customers = Customer::select(['customers.*', 'emails.email'])
+            ->leftJoin('emails', function ($join) {
+                $join->on('customers.id', '=', 'emails.customer_id');
+            })
+            ->where(function ($query) use ($like) {
+                $query->where('customers.first_name', 'like', $like)
+                    ->orWhere('customers.last_name', 'like', $like)
+                    ->orWhere('customers.company', 'like', $like)
+                    ->orWhere('customers.job_title', 'like', $like)
+                    ->orWhere('customers.phones', 'like', $like)
+                    ->orWhere('customers.websites', 'like', $like)
+                    ->orWhere('customers.social_profiles', 'like', $like)
+                    ->orWhere('customers.address', 'like', $like)
+                    ->orWhere('customers.city', 'like', $like)
+                    ->orWhere('customers.state', 'like', $like)
+                    ->orWhere('customers.zip', 'like', $like)
+                    ->orWhere('customers.zip', 'like', $like)
+                    ->orWhere('emails.email', 'like', $like);
+            });
+
+        if (!empty($filters['mailbox'])) {
+            $query_customers->join('conversations', function ($join) use ($filters) {
+                $join->on('conversations.customer_id', '=', 'customers.id');
+                //$join->on('conversations.mailbox_id', '=', $filters['mailbox']);
+            });
+            $query_customers->where('conversations.mailbox_id', '=', $filters['mailbox']);
+        }
+
+        $query_customers = Eventy::filter('search.customers.apply_filters', $query_customers, $filters, $q);
+
+        return $query_customers->paginate(50);
+    }
+
+    private function searchElasticSearch(User $user, string $q, array $filters) {
+        $searchResult = Conversation::boolSearch()
+            ->should([ 'match', [ 'subject' => $q ] ])
+            ->should([ 'match', [ 'customer_email' => $q ] ])
+            ->should([ 'match', [ 'number' => $q ] ])
+            ->should([ 'match', [ 'id' => $q ] ])
+            ->minimumShouldMatch(1)
+            ->execute();
+        dd($searchResult->models());
     }
 
     /**

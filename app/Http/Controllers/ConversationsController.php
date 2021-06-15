@@ -31,7 +31,8 @@ use Illuminate\Support\Facades\Input;
 use TorMorten\Eventy\Facades\Events as Eventy;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Session;
-use Validator;
+use Illuminate\Support\Facades\Validator;
+use App\Misc\Helper;
 
 /**
  * Class ConversationsController
@@ -41,6 +42,9 @@ class ConversationsController extends Controller
 {
     const PREV_CONVERSATIONS_LIMIT = 5;
 
+    /**
+     * @var Search : This is an instance of the class App\Search\Search
+     */
     private $search;
 
     /**
@@ -67,8 +71,8 @@ class ConversationsController extends Controller
         $user = auth()->user();
 
         // To let other parts of the app easily access.
-        \Helper::setGlobalEntity('conversation', $conversation);
-        \Helper::setGlobalEntity('mailbox', $mailbox);
+        Helper::setGlobalEntity('conversation', $conversation);
+        Helper::setGlobalEntity('mailbox', $mailbox);
 
         if ($user->isAdmin()) {
             $mailbox->fetchUserSettings($user->id);
@@ -270,7 +274,7 @@ class ConversationsController extends Controller
 
         $is_following = $conversation->isUserFollowing($user->id);
 
-        \Eventy::action('conversation.view.start', $conversation);
+        Eventy::action('conversation.view.start', $conversation);
 
         return view($template, [
             'conversation'       => $conversation,
@@ -726,11 +730,11 @@ class ConversationsController extends Controller
                     if (!$new) {
                         if ($status_changed) {
                             event(new ConversationStatusChanged($conversation));
-                            \Eventy::action('conversation.status_changed', $conversation, $user, $changed_on_reply = true, $prev_status);
+                            Eventy::action('conversation.status_changed', $conversation, $user, $changed_on_reply = true, $prev_status);
                         }
                         if ($user_changed) {
                             event(new ConversationUserChanged($conversation, $user));
-                            \Eventy::action('conversation.user_changed', $conversation, $user, $prev_user_id);
+                            Eventy::action('conversation.user_changed', $conversation, $user, $prev_user_id);
                         }
                     }
 
@@ -899,7 +903,7 @@ class ConversationsController extends Controller
                     if ($is_create) {
                         // New conversation.
                         event(new UserCreatedConversation($conversation, $thread));
-                        \Eventy::action('conversation.created_by_user_can_undo', $conversation, $thread);
+                        Eventy::action('conversation.created_by_user_can_undo', $conversation, $thread);
                         // After Conversation::UNDO_TIMOUT period trigger final event.
                         \Helper::backgroundAction('conversation.created_by_user', [$conversation, $thread], now()->addSeconds(Conversation::UNDO_TIMOUT));
                     } elseif ($is_forward) {
@@ -911,18 +915,18 @@ class ConversationsController extends Controller
 
                             // To send email with forwarded conversation.
                             event(new UserReplied($forwarded_conversation, $forwarded_thread));
-                            \Eventy::action('conversation.user_forwarded_can_undo', $conversation, $thread, $forwarded_conversation, $forwarded_thread);
+                            Eventy::action('conversation.user_forwarded_can_undo', $conversation, $thread, $forwarded_conversation, $forwarded_thread);
                             // After Conversation::UNDO_TIMOUT period trigger final event.
                             \Helper::backgroundAction('conversation.user_forwarded', [$conversation, $thread, $forwarded_conversation, $forwarded_thread], now()->addSeconds(Conversation::UNDO_TIMOUT));
                         }
                     } elseif ($is_note) {
                         // Note.
                         event(new UserAddedNote($conversation, $thread));
-                        \Eventy::action('conversation.note_added', $conversation, $thread);
+                        Eventy::action('conversation.note_added', $conversation, $thread);
                     } else {
                         // Reply.
                         event(new UserReplied($conversation, $thread));
-                        \Eventy::action('conversation.user_replied_can_undo', $conversation, $thread);
+                        Eventy::action('conversation.user_replied_can_undo', $conversation, $thread);
                         // After Conversation::UNDO_TIMOUT period trigger final event.
                         \Helper::backgroundAction('conversation.user_replied', [$conversation, $thread], now()->addSeconds(Conversation::UNDO_TIMOUT));
                     }
@@ -966,7 +970,7 @@ class ConversationsController extends Controller
                             // Events.
                             // todo: allow to undo all emails
                             event(new UserCreatedConversation($conversation_copy, $thread_copy));
-                            \Eventy::action('conversation.created_by_user_can_undo', $conversation_copy, $thread_copy);
+                            Eventy::action('conversation.created_by_user_can_undo', $conversation_copy, $thread_copy);
                             // After Conversation::UNDO_TIMOUT period trigger final event.
                             \Helper::backgroundAction('conversation.created_by_user', [$conversation_copy, $thread_copy], now()->addSeconds(Conversation::UNDO_TIMOUT));
                         }
@@ -2188,7 +2192,7 @@ class ConversationsController extends Controller
         $conversations = [];
 
         if (!$response['msg']) {
-            $folder = \Eventy::filter('conversations.ajax_pagination_folder', Folder::find($request->folder_id), $request, $response, $user);
+            $folder = Eventy::filter('conversations.ajax_pagination_folder', Folder::find($request->folder_id), $request, $response, $user);
             if (!$folder) {
                 $response['msg'] = __('Folder not found');
             }
@@ -2237,9 +2241,9 @@ class ConversationsController extends Controller
 
         $conversations = [];
         if (Eventy::filter('search.is_needed', true, 'conversations')) {
-            $conversations = $this->search->search($user, $q, $filters);
+            $conversations = $this->search->searchConversation($user, $q, $filters);
         }
-        $customers = $this->searchCustomers($q, $filters, $user);
+        $customers = $this->search->searchCustomers($q, $filters, $user);
 
         // View options
         // List of available filters.
@@ -2326,67 +2330,10 @@ class ConversationsController extends Controller
             }
         }
 
-        $filters = \Eventy::filter('search.filters', $filters, $this->getSearchMode($request), $request);
+        $filters = Eventy::filter('search.filters', $filters, $this->getSearchMode($request), $request);
 
         return $filters;
     }
-
-    /**
-     * Search conversations.
-     */
-    public function searchCustomers($q, $filters, $user)
-    {
-        // Get IDs of mailboxes to which user has access
-        $mailbox_ids = $user->mailboxesIdsCanView();
-
-        // Like is case insensitive.
-        $like = '%'.mb_strtolower($q).'%';
-
-        $query_customers = Customer::select(['customers.*', 'emails.email'])
-            ->leftJoin('emails', function ($join) {
-                $join->on('customers.id', '=', 'emails.customer_id');
-            })
-            ->where(function ($query) use ($like) {
-                $query->where('customers.first_name', 'like', $like)
-                    ->orWhere('customers.last_name', 'like', $like)
-                    ->orWhere('customers.company', 'like', $like)
-                    ->orWhere('customers.job_title', 'like', $like)
-                    ->orWhere('customers.phones', 'like', $like)
-                    ->orWhere('customers.websites', 'like', $like)
-                    ->orWhere('customers.social_profiles', 'like', $like)
-                    ->orWhere('customers.address', 'like', $like)
-                    ->orWhere('customers.city', 'like', $like)
-                    ->orWhere('customers.state', 'like', $like)
-                    ->orWhere('customers.zip', 'like', $like)
-                    ->orWhere('customers.zip', 'like', $like)
-                    ->orWhere('emails.email', 'like', $like);
-            });
-
-        if (!empty($filters['mailbox'])) {
-            $query_customers->join('conversations', function ($join) use ($filters) {
-                $join->on('conversations.customer_id', '=', 'customers.id');
-                //$join->on('conversations.mailbox_id', '=', $filters['mailbox']);
-            });
-            $query_customers->where('conversations.mailbox_id', '=', $filters['mailbox']);
-        }
-
-        $query_customers = Eventy::filter('search.customers.apply_filters', $query_customers, $filters, $q);
-
-        return $query_customers->paginate(50);
-    }
-
-    /**
-     * Get dummy folder for search.
-     */
-    /*public function getSearchFolder($conversations)
-    {
-        $folder = new Folder();
-        $folder->type = Folder::TYPE_ASSIGNED;
-        // todo: use select([\DB::raw('SQL_CALC_FOUND_ROWS *')]) to count records
-        //$folder->total_count = $conversations->count();
-
-        return $folder;
-    }*/
 
     /**
      * Ajax conversations search.
@@ -2395,7 +2342,7 @@ class ConversationsController extends Controller
     {
         if (array_key_exists('q', $request->filter)) {
             // Search
-            $conversations = $this->search->search($user, $this->getSearchQuery($request), $this->getSearchFilters($request));
+            $conversations = $this->search->searchConversation($user, $this->getSearchQuery($request), $this->getSearchFilters($request));
         } else {
             // Filters
             $conversations = $this->conversationsFilterQuery($request, $user);
